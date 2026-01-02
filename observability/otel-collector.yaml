@@ -1,0 +1,79 @@
+receivers:
+  otlp:
+    protocols:
+      grpc: {}
+      http: {}
+
+processors:
+  batch: {}
+  resourcedetection:
+    detectors: [env]
+    timeout: 2s
+  resource:
+    attributes:
+      - key: service.namespace
+        value: ${SERVICE_NAMESPACE}
+        action: upsert
+      - key: deployment.environment
+        value: ${DEPLOYMENT_ENVIRONMENT}
+        action: upsert
+      - key: tenant.id
+        value: ${TENANT_ID}
+        action: upsert
+  attributes:
+    actions:
+      - key: log.iat
+        action: delete
+  redaction:
+    allow_all_keys: true
+    blocked_values:
+      # Mask potential credit card numbers and IBAN-like identifiers in logs.
+      - pattern: "\\b(?:\d[ -]*?){13,16}\\b"
+        group_name: credit_card
+      - pattern: "\b[A-Z]{2}\d{2}[ -]?[A-Z0-9]{4}[ -]?[A-Z0-9]{4}[ -]?[A-Z0-9]{4}[ -]?[A-Z0-9]{3,7}\b"
+        group_name: iban
+      # Mask email addresses.
+      - pattern: "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"
+        group_name: email
+
+exporters:
+  otlp:
+    endpoint: ${OTLP_ENDPOINT}
+    tls:
+      insecure: ${OTLP_INSECURE:false}
+    headers:
+      authorization: ${OTLP_AUTH_TOKEN}
+  logging:
+    loglevel: warn
+  prometheusremotewrite:
+    endpoint: ${PROMETHEUS_REMOTEWRITE_ENDPOINT}
+    tls:
+      insecure: ${PROMETHEUS_REMOTEWRITE_INSECURE:false}
+    external_labels:
+      tenant: ${TENANT_ID}
+      environment: ${DEPLOYMENT_ENVIRONMENT}
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  pprof:
+    endpoint: 0.0.0.0:1888
+
+service:
+  telemetry:
+    logs:
+      level: "info"
+  extensions: [health_check, pprof]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [resourcedetection, resource, batch]
+      exporters: [otlp]
+    metrics:
+      receivers: [otlp]
+      processors: [resourcedetection, resource, batch]
+      exporters: [prometheusremotewrite, otlp]
+    logs:
+      receivers: [otlp]
+      processors: [resourcedetection, resource, redaction, batch]
+      exporters: [otlp, logging]

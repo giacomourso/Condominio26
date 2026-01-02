@@ -1,0 +1,61 @@
+groups:
+  - name: application-slo
+    rules:
+      - alert: HighErrorRate
+        expr: sum(rate(http_server_requests_seconds_count{status=~"5.."}[5m])) by (service)
+              /
+              sum(rate(http_server_requests_seconds_count[5m])) by (service)
+              > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} error rate >5%"
+          description: "Elevato tasso di errori 5xx negli ultimi 10m"
+
+      - alert: HighLatencyP95
+        expr: histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket[5m])) by (le, service)) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} p95 > 800ms"
+          description: "Latenza p95 oltre soglia per 5m"
+
+      - alert: TenantTrafficSpike
+        expr: (sum(rate(http_server_requests_seconds_count[5m])) by (tenant)) > (sum(rate(http_server_requests_seconds_count[1h])) by (tenant) * 2)
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "Spike di traffico tenant {{ $labels.tenant }}"
+          description: "Traffico >2x della media oraria"
+
+  - name: platform-health
+    rules:
+      - alert: PodRestartLoop
+        expr: sum(increase(kube_pod_container_status_restarts_total[10m])) by (pod, namespace) > 3
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Pod {{ $labels.pod }} in restart loop"
+          description: "Più di 3 restart negli ultimi 10 minuti"
+
+      - alert: PodSecurityViolation
+        expr: increase(apiserver_admission_webhook_admission_latencies_seconds_count{admission_step="reject", webhook=~"podsecurity.*"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Violazioni PodSecurity"
+          description: "Pod respinti dalle regole PodSecurity"
+
+      - alert: OtelCollectorDown
+        expr: absent(process_start_time_seconds{job="otel-collector"})
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OpenTelemetry Collector non raggiungibile"
+          description: "Exporter OTLP o pipelines offline"

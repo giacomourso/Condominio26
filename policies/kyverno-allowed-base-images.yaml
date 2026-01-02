@@ -1,0 +1,39 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: allowed-base-images
+spec:
+  validationFailureAction: Enforce
+  background: true
+  webhookTimeoutSeconds: 15
+  rules:
+    - name: require-approved-base-image
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      validate:
+        message: "Usare solo immagini base approvate"
+        foreach:
+          - list: "request.object.spec.containers[]"
+            deny:
+              conditions:
+                all:
+                  - key: "{{ regex_match('^(ghcr.io/condominio26|registry.k8s.io|cgr.dev/chainguard|gcr.io/distroless)/.*', element.image) }}"
+                    operator: Equals
+                    value: false
+    - name: disallow-latest-tag
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      validate:
+        message: "Non usare il tag 'latest'"
+        foreach:
+          - list: "request.object.spec.containers[]"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ regex_match('.*:latest$', element.image) }}"
+                    operator: Equals
+                    value: true

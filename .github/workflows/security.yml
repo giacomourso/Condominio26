@@ -1,0 +1,107 @@
+name: Security Scans
+
+on:
+  push:
+    branches: ["main", "master", "work", "develop", "release/**"]
+  pull_request:
+  schedule:
+    - cron: "0 2 * * *"
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  dependency-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency-Check
+        uses: dependency-check/Dependency-Check_Action@v3.1.3
+        with:
+          project: ${{ github.repository }}
+          path: "."
+          format: "HTML,JSON"
+          args: "--failOnCVSS 0 --enableRetired"
+
+      - name: Upload dependency-check report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: ${{ github.workspace }}/reports
+
+  trivy-fs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.22.0
+        with:
+          scan-type: fs
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          skip-dirs: vendor
+
+  trivy-image:
+    if: ${{ env.IMAGE_NAME != '' }}
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: ${{ vars.IMAGE_NAME || '' }}
+    steps:
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.22.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+  dast-zap:
+    if: ${{ env.DAST_TARGET_URL != '' }}
+    runs-on: ubuntu-latest
+    env:
+      DAST_TARGET_URL: ${{ vars.DAST_TARGET_URL || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: OWASP ZAP baseline scan
+        uses: zaproxy/action-baseline@v0.11.0
+        with:
+          target: ${{ env.DAST_TARGET_URL }}
+          rules_file_name: ".zap/rules.tsv"
+        continue-on-error: true
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: report_html.html
+
+  policy-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install YAML tooling
+        run: pip install pyyaml
+
+      - name: Validate policy manifests
+        run: |
+          python - <<'PY'
+          import glob, sys, yaml
+          files = glob.glob('policies/*.yaml')
+          if not files:
+              sys.exit('No policy files found')
+          for path in files:
+              with open(path) as f:
+                  yaml.safe_load_all(f)
+          print(f\"Validated {len(files)} policy files\")
+          PY
